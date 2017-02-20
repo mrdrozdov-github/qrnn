@@ -150,7 +150,7 @@ if __name__ == '__main__':
 
     # Model settings.
     gflags.DEFINE_enum("model_type", "qrnn", ["cbow", "rnn", "rnn-gate", "qrnn"], "")
-    gflags.DEFINE_integer("kernel_size", 2, "")
+    gflags.DEFINE_integer("kernel_size", 3, "")
     gflags.DEFINE_integer("model_dim", 100, "")
     gflags.DEFINE_integer("mlp_dim", 256, "")
     gflags.DEFINE_integer("num_classes", 3, "")

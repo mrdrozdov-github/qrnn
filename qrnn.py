@@ -16,7 +16,7 @@ TODO:
 
 - [x] Kernel Size 1
 - [x] Kernel Size 2
-- [ ] Kernel Size N
+- [x] Kernel Size N
 - [ ] Attention
 - [ ] Decoder
 - [ ] GPU Support
@@ -98,8 +98,8 @@ class QRNNLayer(nn.Module):
             self.W = Linear(in_size, 3 * out_size, bias=False)
             self.V = Linear(in_size, 3 * out_size)
         else:
-            self.conv = L.ConvolutionND(1, in_size, 3 * out_size, kernel_size,
-                                     stride=1, pad=kernel_size - 1)
+            self.conv = nn.Conv1d(in_size, 3 * out_size, kernel_size,
+                                     stride=1, padding=kernel_size - 1)
         if attention:
             self.U = Linear(out_size, 3 * in_size)
             self.o = Linear(2 * out_size, out_size)
@@ -121,8 +121,7 @@ class QRNNLayer(nn.Module):
                 xtminus1 = self.x
             ret = self.W(x) + self.V(xtminus1)
         else:
-            ret = F.swapaxes(self.conv(
-                F.swapaxes(x, 1, 2))[:, :, :x.size()[2]], 1, 2)
+            ret = self.conv(x.transpose(1,2).contiguous()).transpose(1,2).contiguous()
 
         if not self.attention:
             return ret
