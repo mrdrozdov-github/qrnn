@@ -16,20 +16,24 @@ from torchtext import datasets
 
 from collections import OrderedDict
 
+from blocks import Linear, strnn
+
 from qrnn import QRNNModel
 
 FLAGS = gflags.FLAGS
 
 
 class CBOW(nn.Module):
-    def __init__(self, inp_dim=None, mlp_dim=None, num_classes=None, dropout_rate=0.5, **kwargs):
+    def __init__(self, inp_dim=None, mlp_dim=None, model_dim=None, num_classes=None, dropout_rate=0.5, **kwargs):
         super(CBOW, self).__init__()
-        self.l0 = nn.Linear(inp_dim, mlp_dim)
+        self.projection = Linear(inp_dim, model_dim)
+        self.l0 = nn.Linear(model_dim, mlp_dim)
         self.l1 = nn.Linear(mlp_dim, mlp_dim)
         self.l2 = nn.Linear(mlp_dim, num_classes)
         self.dropout_rate = dropout_rate
 
     def forward(self, x):
+        x = self.projection(x)
         x = torch.sum(x, 1).squeeze()
         x = F.relu(F.dropout(self.l0(x), self.dropout_rate, self.training))
         x = F.relu(F.dropout(self.l1(x), self.dropout_rate, self.training))
@@ -46,11 +50,12 @@ class RNN(nn.Module):
         self.num_layers = 1
         self.model_dim = model_dim
 
-        self.rnn = nn.GRU(inp_dim, model_dim / self.bi, num_layers=self.num_layers,
+        self.rnn = nn.GRU(model_dim, model_dim / self.bi, num_layers=self.num_layers,
             batch_first=True,
             bidirectional=self.bidirectional,
             )
 
+        self.projection = Linear(inp_dim, model_dim)
         self.l0 = nn.Linear(model_dim, mlp_dim)
         self.l1 = nn.Linear(mlp_dim, mlp_dim)
         self.l2 = nn.Linear(mlp_dim, num_classes)
@@ -75,12 +80,46 @@ class RNN(nn.Module):
         return output, hn
 
     def forward(self, x):
+        x = self.projection(x)
         _, x = self.run_rnn(x)
         x = x.squeeze() # TODO: This won't work for multiple layers or bidirectional.
         x = F.relu(F.dropout(self.l0(x), self.dropout_rate, self.training))
         x = F.relu(F.dropout(self.l1(x), self.dropout_rate, self.training))
         x = self.l2(x)
         return x
+
+
+class RNNGate(nn.Module):
+    def __init__(self, inp_dim=None, mlp_dim=None, model_dim=None, num_classes=None, dropout_rate=0.5, **kwargs):
+        super(RNNGate, self).__init__()
+        self.model_dim = model_dim
+        self.projection = Linear(inp_dim, model_dim * 3)
+        self.l0 = nn.Linear(model_dim, mlp_dim)
+        self.l1 = nn.Linear(mlp_dim, mlp_dim)
+        self.l2 = nn.Linear(mlp_dim, num_classes)
+        self.dropout_rate = dropout_rate
+
+    def forward(self, x):
+        x = self.projection(x)
+        batch_size = x.size(0)
+
+        f, z, o = torch.chunk(x, 3, 2)
+        f = F.sigmoid(f)
+        z = (1 - f) * F.tanh(z)
+        o = F.sigmoid(o)
+
+        c = Variable(torch.from_numpy(np.zeros((batch_size, self.model_dim),
+                dtype=np.float32)), volatile=not self.training)
+
+        c = strnn(f, z, c)
+        h = c * o
+
+        hn = h[:, -1, :]
+
+        hn = F.relu(F.dropout(self.l0(hn), self.dropout_rate, self.training))
+        hn = F.relu(F.dropout(self.l1(hn), self.dropout_rate, self.training))
+        hn = self.l2(hn)
+        return hn
 
 
 def reverse_tensor(var, dim):
@@ -112,41 +151,54 @@ def get_output(model, batch, embed, train=False):
     return outp
 
 
+def get_data():
+    if FLAGS.data_type == "sst":
+        # From torchtext source:
+        # set up fields
+        TEXT = data.Field()
+        LABEL = data.Field(sequential=False)
+
+        # make splits for data
+        train, val = datasets.SST.splits(
+            TEXT, LABEL, fine_grained=False, train_subtrees=False,
+            test=None, train='train.txt' if not FLAGS.demo else 'dev.txt',
+            filter_pred=lambda ex: ex.label != 'neutral')
+
+        # print information about the data
+        print('train.fields', train.fields)
+        print('len(train)', len(train))
+        print('vars(train[0])', vars(train[0]))
+
+        # build the vocabulary
+        TEXT.build_vocab(train, wv_type=FLAGS.wv_type, wv_dim=FLAGS.wv_dim)
+        LABEL.build_vocab(train)
+
+        # print vocab information
+        print('len(TEXT.vocab)', len(TEXT.vocab))
+        print('TEXT.vocab.vectors.size()', TEXT.vocab.vectors.size())
+
+        # make iterator for splits
+        train_iter, val_iter = data.BucketIterator.splits(
+            (train, val), batch_size=FLAGS.batch_size, device=FLAGS.gpu)
+    elif FLAGS.data_type == "imdb":
+        raise NotImplementedError
+    else:
+        raise NotImplementedError
+
+    return train_iter, val_iter, TEXT.vocab.vectors
+
+
 def run():
 
-    # From torchtext source:
-    # set up fields
-    TEXT = data.Field()
-    LABEL = data.Field(sequential=False)
-
-    # make splits for data
-    train, val = datasets.SST.splits(
-        TEXT, LABEL, fine_grained=False, train_subtrees=False,
-        test=None, train='train.txt' if not FLAGS.demo else 'dev.txt',
-        filter_pred=lambda ex: ex.label != 'neutral')
-
-    # print information about the data
-    print('train.fields', train.fields)
-    print('len(train)', len(train))
-    print('vars(train[0])', vars(train[0]))
-
-    # build the vocabulary
-    TEXT.build_vocab(train, wv_type=FLAGS.wv_type, wv_dim=FLAGS.wv_dim)
-    LABEL.build_vocab(train)
-
-    # print vocab information
-    print('len(TEXT.vocab)', len(TEXT.vocab))
-    print('TEXT.vocab.vectors.size()', TEXT.vocab.vectors.size())
-
-    # make iterator for splits
-    train_iter, val_iter = data.BucketIterator.splits(
-        (train, val), batch_size=FLAGS.batch_size, device=FLAGS.gpu)
+    train_iter, val_iter, initial_embeddings = get_data()
 
     # Build model.
     if FLAGS.model_type == "cbow":
         model_cls = CBOW
     elif FLAGS.model_type == "rnn":
         model_cls = RNN
+    elif FLAGS.model_type == "rnn-gate":
+        model_cls = RNNGate
     elif FLAGS.model_type == "qrnn":
         model_cls = QRNNModel
     else:
@@ -167,8 +219,8 @@ def run():
     print(total_params)
 
     # Pre-trained embedding layer.
-    embed = nn.Embedding(TEXT.vocab.vectors.size(0), TEXT.vocab.vectors.size(1))
-    embed.load_state_dict(OrderedDict([('weight', TEXT.vocab.vectors)]))
+    embed = nn.Embedding(initial_embeddings.size(0), initial_embeddings.size(1))
+    embed.load_state_dict(OrderedDict([('weight', initial_embeddings)]))
 
     # Stats.
     trailing_acc = 0.0
@@ -241,6 +293,7 @@ if __name__ == '__main__':
     gflags.DEFINE_integer("gpu", -1, "")
 
     # Data settings.
+    gflags.DEFINE_enum("data_type", "sst", ["sst", "imdb"], "")
     gflags.DEFINE_integer("batch_size", 8, "")
     gflags.DEFINE_string("wv_type", "glove.6B", "")
     gflags.DEFINE_integer("wv_dim", 50, "")

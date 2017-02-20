@@ -19,10 +19,11 @@ class QRNNModel(nn.Module):
                  **kwargs):
         super(QRNNModel, self).__init__()
         self.qrnn = QRNNLayer(
-            in_size=inp_dim,
+            in_size=model_dim,
             out_size=model_dim,
             kernel_size=kernel_size,
             )
+        self.projection = Linear(inp_dim, model_dim)
         self.l0 = nn.Linear(model_dim, mlp_dim)
         self.l1 = nn.Linear(mlp_dim, mlp_dim)
         self.l2 = nn.Linear(mlp_dim, num_classes)
@@ -66,13 +67,13 @@ class QRNNLayer(nn.Module):
 
         return ret
 
-    def init(self, encoder_c=None, encoder_h=None):
+    def reset_state(self):
         self.c = Variable(torch.from_numpy(np.zeros((self.batch_size, self.size),
                                             dtype=np.float32)), volatile=not self.training)
 
     def forward(self, x):
         self.batch_size = x.size()[0]
-        self.init()
+        self.reset_state()
 
         dims = len(x.size()) - 1
         f, z, o = torch.chunk(self.pre(x), 3, dims)
