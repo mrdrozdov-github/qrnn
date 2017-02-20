@@ -15,7 +15,7 @@ import numpy as np
 TODO:
 
 - [x] Kernel Size 1
-- [ ] Kernel Size 2
+- [x] Kernel Size 2
 - [ ] Kernel Size N
 - [ ] Attention
 - [ ] Decoder
@@ -26,12 +26,14 @@ TODO:
 
 class QRNNModel(nn.Module):
     """docstring for QRNNModel"""
-    def __init__(self, inp_dim=None, model_dim=None, mlp_dim=None, num_classes=None, dropout_rate=0.5, **kwargs):
+    def __init__(self, inp_dim=None, model_dim=None, mlp_dim=None, num_classes=None, dropout_rate=0.5,
+                 kernel_size=None,
+                 **kwargs):
         super(QRNNModel, self).__init__()
         self.qrnn = QRNNLayer(
             in_size=inp_dim,
             out_size=model_dim,
-            kernel_size=1,
+            kernel_size=kernel_size,
             attention=False,
             decoder=False,
             )
@@ -93,7 +95,7 @@ class QRNNLayer(nn.Module):
         if kernel_size == 1:
             self.W = Linear(in_size, 3 * out_size)
         elif kernel_size == 2:
-            self.W = Linear(in_size, 3 * out_size, nobias=True)
+            self.W = Linear(in_size, 3 * out_size, bias=False)
             self.V = Linear(in_size, 3 * out_size)
         else:
             self.conv = L.ConvolutionND(1, in_size, 3 * out_size, kernel_size,

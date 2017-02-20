@@ -67,11 +67,18 @@ def run():
 
     # Build model.
     if FLAGS.model_type == "cbow":
-        model = CBOW(inp_dim=FLAGS.wv_dim, mlp_dim=FLAGS.mlp_dim, num_classes=FLAGS.num_classes)
+        model_cls = CBOW
     elif FLAGS.model_type == "qrnn":
-        model = QRNNModel(inp_dim=FLAGS.wv_dim, model_dim=FLAGS.model_dim, mlp_dim=FLAGS.mlp_dim, num_classes=FLAGS.num_classes)
+        model_cls = QRNNModel
     else:
         raise NotImplementedError
+    model = model_cls(
+        inp_dim=FLAGS.wv_dim,
+        model_dim=FLAGS.model_dim,
+        mlp_dim=FLAGS.mlp_dim,
+        num_classes=FLAGS.num_classes,
+        kernel_size=FLAGS.kernel_size,
+        )
 
     # Build optimizer.
     optimizer = optim.Adam(model.parameters())
@@ -130,14 +137,25 @@ def run():
 
 
 if __name__ == '__main__':
-    gflags.DEFINE_integer("batch_size", 8, "")
+    # Debug settings.
+    gflags.DEFINE_boolean("demo", True, "Set to True to use dev data for training, which will load faster.")
+
+    # Device settings.
     gflags.DEFINE_integer("gpu", -1, "")
+
+    # Data settings.
+    gflags.DEFINE_integer("batch_size", 8, "")
     gflags.DEFINE_string("wv_type", "glove.10k", "")
     gflags.DEFINE_integer("wv_dim", 50, "")
+
+    # Model settings.
+    gflags.DEFINE_enum("model_type", "qrnn", ["cbow", "rnn", "rnn-gate", "qrnn"], "")
+    gflags.DEFINE_integer("kernel_size", 2, "")
     gflags.DEFINE_integer("model_dim", 100, "")
     gflags.DEFINE_integer("mlp_dim", 256, "")
     gflags.DEFINE_integer("num_classes", 3, "")
-    gflags.DEFINE_boolean("demo", True, "Set to True to use dev data for training, which will load faster.")
-    gflags.DEFINE_enum("model_type", "qrnn", ["cbow", "rnn", "rnn-gate", "qrnn"], "")
+
+    # Read command line options.
     FLAGS(sys.argv)
+
     run()
