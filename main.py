@@ -2,6 +2,8 @@ import gflags
 import time
 import sys
 
+import numpy as np
+
 # PyTorch
 import torch
 import torch.nn as nn
@@ -13,6 +15,8 @@ from torchtext import data
 from torchtext import datasets
 
 from collections import OrderedDict
+
+from qrnn import QRNNModel
 
 FLAGS = gflags.FLAGS
 
@@ -64,6 +68,8 @@ def run():
     # Build model.
     if FLAGS.model_type == "cbow":
         model = CBOW(inp_dim=FLAGS.wv_dim, mlp_dim=FLAGS.mlp_dim, num_classes=FLAGS.num_classes)
+    elif FLAGS.model_type == "qrnn":
+        model = QRNNModel(inp_dim=FLAGS.wv_dim, model_dim=FLAGS.model_dim, mlp_dim=FLAGS.mlp_dim, num_classes=FLAGS.num_classes)
     else:
         raise NotImplementedError
 
@@ -128,8 +134,10 @@ if __name__ == '__main__':
     gflags.DEFINE_integer("gpu", -1, "")
     gflags.DEFINE_string("wv_type", "glove.10k", "")
     gflags.DEFINE_integer("wv_dim", 50, "")
+    gflags.DEFINE_integer("model_dim", 100, "")
     gflags.DEFINE_integer("mlp_dim", 256, "")
     gflags.DEFINE_integer("num_classes", 3, "")
     gflags.DEFINE_boolean("demo", True, "Set to True to use dev data for training, which will load faster.")
-    gflags.DEFINE_enum("model_type", "cbow", ["cbow", "rnn", "rnn-gate", "qrnn"], "")
+    gflags.DEFINE_enum("model_type", "qrnn", ["cbow", "rnn", "rnn-gate", "qrnn"], "")
+    FLAGS(sys.argv)
     run()
