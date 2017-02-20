@@ -35,6 +35,24 @@ class CBOW(nn.Module):
         x = self.l2(x)
         return x
 
+def get_output(model, batch, embed, train=False):
+    if train:
+        model.train()
+    else:
+        model.eval()
+
+    # Build input.
+    x = batch.text.t() # reshape to (B, S)
+    batch_size, seq_length = x.size()
+    x = embed(x.contiguous().view(-1)) # embed
+    x = x.view(batch_size, seq_length, -1) # reshape to (B, S, E)
+    x = Variable(x.data, volatile=not train) # break the computational chain
+
+    # Calculate loss and update parameters.
+    outp = model(x)
+
+    return outp
+
 def run():
 
     # From torchtext source:
@@ -97,25 +115,16 @@ def run():
 
     # Main train loop.
     for batch_idx, batch in enumerate(train_iter):
-        model.train()
-
         start = time.time()
-
-        # Build input.
-        x = batch.text.t() # reshape to (B, S)
-        batch_size, seq_length = x.size()
-        x = embed(x.contiguous().view(-1)) # embed
-        x = x.view(batch_size, seq_length, -1) # reshape to (B, S, E)
-        x = Variable(x.data, volatile=False) # break the computational chain
 
         # Build target.
         y = batch.label
 
-        # Calculate loss and update parameters.
-        model.zero_grad()
-        outp = model(x)
+        outp = get_output(model, batch, embed, train=True)
         dist = F.log_softmax(outp)
         loss = nn.NLLLoss()(dist, y)
+
+        model.zero_grad()
         loss.backward()
         optimizer.step()
 
@@ -132,20 +141,40 @@ def run():
         trailing_time = 0.9 * trailing_time + 0.1 * time_per_token
 
         # Periodically print statistics.
-        if batch_idx % 100 == 0:
+        if batch_idx % FLAGS.statistics_interval_steps == 0:
             print("Step: {} Loss: {} Acc: {} Time: {:.10f}".format(batch_idx, loss.data[0], trailing_acc, trailing_time))
+
+        if batch_idx > 0 and batch_idx % FLAGS.eval_interval_steps == 0:
+            start = time.time()
+            total_tokens = 0
+            total_correct = 0
+            total = 0
+            for eval_batch_idx, eval_batch in enumerate(val_iter):
+                y = eval_batch.label
+                outp = get_output(model, eval_batch, embed, train=False)
+                dist = F.log_softmax(outp)
+                preds = dist.data.max(1)[1]
+
+                total_tokens += reduce(lambda x, y: x * y, eval_batch.text.size())
+                total_correct += y.data.eq(preds).sum()
+                total += y.size(0)
+            end = time.time()
+            time_per_token = (end-start) / float(total_tokens)
+            acc = total_correct / float(total)
+            print("Eval Step: {} Acc: {} Time: {:.10f}".format(batch_idx, acc, time_per_token))
+
 
 
 if __name__ == '__main__':
     # Debug settings.
-    gflags.DEFINE_boolean("demo", True, "Set to True to use dev data for training, which will load faster.")
+    gflags.DEFINE_boolean("demo", False, "Set to True to use dev data for training, which will load faster.")
 
     # Device settings.
     gflags.DEFINE_integer("gpu", -1, "")
 
     # Data settings.
     gflags.DEFINE_integer("batch_size", 8, "")
-    gflags.DEFINE_string("wv_type", "glove.10k", "")
+    gflags.DEFINE_string("wv_type", "glove.6B", "")
     gflags.DEFINE_integer("wv_dim", 50, "")
 
     # Model settings.
@@ -154,6 +183,10 @@ if __name__ == '__main__':
     gflags.DEFINE_integer("model_dim", 100, "")
     gflags.DEFINE_integer("mlp_dim", 256, "")
     gflags.DEFINE_integer("num_classes", 3, "")
+
+    # Log settings.
+    gflags.DEFINE_integer("statistics_interval_steps", 100, "")
+    gflags.DEFINE_integer("eval_interval_steps", 100, "")
 
     # Read command line options.
     FLAGS(sys.argv)
