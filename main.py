@@ -20,6 +20,7 @@ from qrnn import QRNNModel
 
 FLAGS = gflags.FLAGS
 
+
 class CBOW(nn.Module):
     def __init__(self, inp_dim=None, mlp_dim=None, num_classes=None, dropout_rate=0.5, **kwargs):
         super(CBOW, self).__init__()
@@ -34,6 +35,63 @@ class CBOW(nn.Module):
         x = F.relu(F.dropout(self.l1(x), self.dropout_rate, self.training))
         x = self.l2(x)
         return x
+
+
+class RNN(nn.Module):
+    def __init__(self, inp_dim=None, mlp_dim=None, model_dim=None, num_classes=None, dropout_rate=0.5, **kwargs):
+        super(RNN, self).__init__()
+        self.reverse = False
+        self.bidirectional = False
+        self.bi = 2 if self.bidirectional else 1
+        self.num_layers = 1
+        self.model_dim = model_dim
+
+        self.rnn = nn.GRU(inp_dim, model_dim / self.bi, num_layers=self.num_layers,
+            batch_first=True,
+            bidirectional=self.bidirectional,
+            )
+
+        self.l0 = nn.Linear(model_dim, mlp_dim)
+        self.l1 = nn.Linear(mlp_dim, mlp_dim)
+        self.l2 = nn.Linear(mlp_dim, num_classes)
+        self.dropout_rate = dropout_rate
+
+    def run_rnn(self, x):
+        bi = self.bi
+
+        batch_size, seq_len = x.size()[:2]
+        model_dim = self.model_dim
+
+        if self.reverse:
+            x = reverse_tensor(x, dim=1)
+
+        num_layers = self.num_layers
+        h0 = Variable(torch.zeros(num_layers * bi, batch_size, model_dim / bi), volatile=not self.training)
+        output, hn = self.rnn(x, h0)
+
+        if self.reverse:
+            output = reverse_tensor(output, dim=1)
+
+        return output, hn
+
+    def forward(self, x):
+        _, x = self.run_rnn(x)
+        x = x.squeeze() # TODO: This won't work for multiple layers or bidirectional.
+        x = F.relu(F.dropout(self.l0(x), self.dropout_rate, self.training))
+        x = F.relu(F.dropout(self.l1(x), self.dropout_rate, self.training))
+        x = self.l2(x)
+        return x
+
+
+def reverse_tensor(var, dim):
+    dim_size = var.size(dim)
+    index = [i for i in range(dim_size - 1, -1, -1)]
+    index = torch.LongTensor(index)
+    if isinstance(var, Variable):
+        index = to_gpu(Variable(index, volatile=var.volatile))
+    inverted_tensor = var.index_select(dim, index)
+    return inverted_tensor
+
 
 def get_output(model, batch, embed, train=False):
     if train:
@@ -52,6 +110,7 @@ def get_output(model, batch, embed, train=False):
     outp = model(x)
 
     return outp
+
 
 def run():
 
@@ -86,6 +145,8 @@ def run():
     # Build model.
     if FLAGS.model_type == "cbow":
         model_cls = CBOW
+    elif FLAGS.model_type == "rnn":
+        model_cls = RNN
     elif FLAGS.model_type == "qrnn":
         model_cls = QRNNModel
     else:
@@ -113,57 +174,64 @@ def run():
     trailing_acc = 0.0
     trailing_time = 0.0
 
-    # Main train loop.
-    for batch_idx, batch in enumerate(train_iter):
-        start = time.time()
+    step = 0
+    epoch = 0
 
-        # Build target.
-        y = batch.label
-
-        outp = get_output(model, batch, embed, train=True)
-        dist = F.log_softmax(outp)
-        loss = nn.NLLLoss()(dist, y)
-
-        model.zero_grad()
-        loss.backward()
-        optimizer.step()
-
-        # Calculate accuracy.
-        preds = dist.data.max(1)[1]
-        acc = y.data.eq(preds).sum() / float(y.size(0))
-        trailing_acc = 0.9 * trailing_acc + 0.1 * acc
-
-        end = time.time()
-
-        # Calculate time per token.
-        num_tokens = reduce(lambda x, y: x * y, batch.text.size())
-        time_per_token = (end-start) / float(num_tokens)
-        trailing_time = 0.9 * trailing_time + 0.1 * time_per_token
-
-        # Periodically print statistics.
-        if batch_idx % FLAGS.statistics_interval_steps == 0:
-            print("Step: {} Loss: {} Acc: {} Time: {:.10f}".format(batch_idx, loss.data[0], trailing_acc, trailing_time))
-
-        if batch_idx > 0 and batch_idx % FLAGS.eval_interval_steps == 0:
+    while True:
+        # Main train loop.
+        for batch_idx, batch in enumerate(train_iter):
             start = time.time()
-            total_tokens = 0
-            total_correct = 0
-            total = 0
-            for eval_batch_idx, eval_batch in enumerate(val_iter):
-                y = eval_batch.label
-                outp = get_output(model, eval_batch, embed, train=False)
-                dist = F.log_softmax(outp)
-                preds = dist.data.max(1)[1]
 
-                total_tokens += reduce(lambda x, y: x * y, eval_batch.text.size())
-                total_correct += y.data.eq(preds).sum()
-                total += y.size(0)
+            # Build target.
+            y = batch.label
+
+            outp = get_output(model, batch, embed, train=True)
+            dist = F.log_softmax(outp)
+            loss = nn.NLLLoss()(dist, y)
+
+            model.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+            # Calculate accuracy.
+            preds = dist.data.max(1)[1]
+            acc = y.data.eq(preds).sum() / float(y.size(0))
+            trailing_acc = 0.9 * trailing_acc + 0.1 * acc
+
             end = time.time()
-            time_per_token = (end-start) / float(total_tokens)
-            acc = total_correct / float(total)
-            print("Eval Step: {} Acc: {} Time: {:.10f}".format(batch_idx, acc, time_per_token))
 
+            # Calculate time per token.
+            num_tokens = reduce(lambda x, y: x * y, batch.text.size())
+            time_per_token = (end-start) / float(num_tokens)
+            trailing_time = 0.9 * trailing_time + 0.1 * time_per_token
 
+            # Periodically print statistics.
+            if step % FLAGS.statistics_interval_steps == 0:
+                print("Step: {} [{}] Loss: {} Acc: {} Time: {:.10f}".format(step, epoch, loss.data[0], trailing_acc, trailing_time))
+
+            if step > 0 and step % FLAGS.eval_interval_steps == 0:
+                start = time.time()
+                total_tokens = 0
+                total_correct = 0
+                total = 0
+                for eval_batch_idx, eval_batch in enumerate(val_iter):
+                    y = eval_batch.label
+                    outp = get_output(model, eval_batch, embed, train=False)
+                    dist = F.log_softmax(outp)
+                    preds = dist.data.max(1)[1]
+
+                    total_tokens += reduce(lambda x, y: x * y, eval_batch.text.size())
+                    total_correct += y.data.eq(preds).sum()
+                    total += y.size(0)
+                end = time.time()
+                time_per_token = (end-start) / float(total_tokens)
+                acc = total_correct / float(total)
+                print("Eval Step: {} [{}] Acc: {} Time: {:.10f}".format(step, epoch, acc, time_per_token))
+
+            step += 1
+            if step > FLAGS.training_steps:
+                quit()
+        epoch += 1
 
 if __name__ == '__main__':
     # Debug settings.
@@ -183,6 +251,9 @@ if __name__ == '__main__':
     gflags.DEFINE_integer("model_dim", 100, "")
     gflags.DEFINE_integer("mlp_dim", 256, "")
     gflags.DEFINE_integer("num_classes", 3, "")
+
+    # Train settings.
+    gflags.DEFINE_integer("training_steps", 10000, "")
 
     # Log settings.
     gflags.DEFINE_integer("statistics_interval_steps", 100, "")
