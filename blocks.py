@@ -32,3 +32,13 @@ def strnn(f, z, hinit):
 
     hs = torch.cat([hh.unsqueeze(1) for hh in h[1:]], 1)
     return hs
+
+
+def reverse_tensor(var, dim):
+    dim_size = var.size(dim)
+    index = [i for i in range(dim_size - 1, -1, -1)]
+    index = torch.LongTensor(index)
+    if isinstance(var, Variable):
+        index = to_gpu(Variable(index, volatile=var.volatile))
+    inverted_tensor = var.index_select(dim, index)
+    return inverted_tensor

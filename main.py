@@ -16,120 +16,14 @@ from torchtext import datasets
 
 from collections import OrderedDict
 
-from blocks import Linear, strnn
+from blocks import Linear, strnn, reverse_tensor
 
-from qrnn import QRNNModel
+import models.cbow
+import models.rnn
+import models.qrnn
+import models.rnn_pool
 
 FLAGS = gflags.FLAGS
-
-
-class CBOW(nn.Module):
-    def __init__(self, inp_dim=None, mlp_dim=None, model_dim=None, num_classes=None, dropout_rate=0.5, **kwargs):
-        super(CBOW, self).__init__()
-        self.projection = Linear(inp_dim, model_dim)
-        self.l0 = nn.Linear(model_dim, mlp_dim)
-        self.l1 = nn.Linear(mlp_dim, mlp_dim)
-        self.l2 = nn.Linear(mlp_dim, num_classes)
-        self.dropout_rate = dropout_rate
-
-    def forward(self, x):
-        x = self.projection(x)
-        x = torch.sum(x, 1).squeeze()
-        x = F.relu(F.dropout(self.l0(x), self.dropout_rate, self.training))
-        x = F.relu(F.dropout(self.l1(x), self.dropout_rate, self.training))
-        x = self.l2(x)
-        return x
-
-
-class RNN(nn.Module):
-    def __init__(self, inp_dim=None, mlp_dim=None, model_dim=None, num_classes=None, dropout_rate=0.5, **kwargs):
-        super(RNN, self).__init__()
-        self.reverse = False
-        self.bidirectional = False
-        self.bi = 2 if self.bidirectional else 1
-        self.num_layers = 1
-        self.model_dim = model_dim
-
-        self.rnn = nn.GRU(model_dim, model_dim / self.bi, num_layers=self.num_layers,
-            batch_first=True,
-            bidirectional=self.bidirectional,
-            )
-
-        self.projection = Linear(inp_dim, model_dim)
-        self.l0 = nn.Linear(model_dim, mlp_dim)
-        self.l1 = nn.Linear(mlp_dim, mlp_dim)
-        self.l2 = nn.Linear(mlp_dim, num_classes)
-        self.dropout_rate = dropout_rate
-
-    def run_rnn(self, x):
-        bi = self.bi
-
-        batch_size, seq_len = x.size()[:2]
-        model_dim = self.model_dim
-
-        if self.reverse:
-            x = reverse_tensor(x, dim=1)
-
-        num_layers = self.num_layers
-        h0 = Variable(torch.zeros(num_layers * bi, batch_size, model_dim / bi), volatile=not self.training)
-        output, hn = self.rnn(x, h0)
-
-        if self.reverse:
-            output = reverse_tensor(output, dim=1)
-
-        return output, hn
-
-    def forward(self, x):
-        x = self.projection(x)
-        _, x = self.run_rnn(x)
-        x = x.squeeze() # TODO: This won't work for multiple layers or bidirectional.
-        x = F.relu(F.dropout(self.l0(x), self.dropout_rate, self.training))
-        x = F.relu(F.dropout(self.l1(x), self.dropout_rate, self.training))
-        x = self.l2(x)
-        return x
-
-
-class RNNGate(nn.Module):
-    def __init__(self, inp_dim=None, mlp_dim=None, model_dim=None, num_classes=None, dropout_rate=0.5, **kwargs):
-        super(RNNGate, self).__init__()
-        self.model_dim = model_dim
-        self.projection = Linear(inp_dim, model_dim * 3)
-        self.l0 = nn.Linear(model_dim, mlp_dim)
-        self.l1 = nn.Linear(mlp_dim, mlp_dim)
-        self.l2 = nn.Linear(mlp_dim, num_classes)
-        self.dropout_rate = dropout_rate
-
-    def forward(self, x):
-        x = self.projection(x)
-        batch_size = x.size(0)
-
-        f, z, o = torch.chunk(x, 3, 2)
-        f = F.sigmoid(f)
-        z = (1 - f) * F.tanh(z)
-        o = F.sigmoid(o)
-
-        c = Variable(torch.from_numpy(np.zeros((batch_size, self.model_dim),
-                dtype=np.float32)), volatile=not self.training)
-
-        c = strnn(f, z, c)
-        h = c * o
-
-        hn = h[:, -1, :]
-
-        hn = F.relu(F.dropout(self.l0(hn), self.dropout_rate, self.training))
-        hn = F.relu(F.dropout(self.l1(hn), self.dropout_rate, self.training))
-        hn = self.l2(hn)
-        return hn
-
-
-def reverse_tensor(var, dim):
-    dim_size = var.size(dim)
-    index = [i for i in range(dim_size - 1, -1, -1)]
-    index = torch.LongTensor(index)
-    if isinstance(var, Variable):
-        index = to_gpu(Variable(index, volatile=var.volatile))
-    inverted_tensor = var.index_select(dim, index)
-    return inverted_tensor
 
 
 def get_output(model, batch, embed, train=False):
@@ -194,15 +88,16 @@ def run():
 
     # Build model.
     if FLAGS.model_type == "cbow":
-        model_cls = CBOW
+        model_cls = models.cbow.Model
     elif FLAGS.model_type == "rnn":
-        model_cls = RNN
-    elif FLAGS.model_type == "rnn-gate":
-        model_cls = RNNGate
+        model_cls = models.rnn.Model
+    elif FLAGS.model_type == "rnn_pool":
+        model_cls = models.rnn_pool.Model
     elif FLAGS.model_type == "qrnn":
-        model_cls = QRNNModel
+        model_cls = models.qrnn.Model
     else:
         raise NotImplementedError
+
     model = model_cls(
         inp_dim=FLAGS.wv_dim,
         model_dim=FLAGS.model_dim,
@@ -299,7 +194,7 @@ if __name__ == '__main__':
     gflags.DEFINE_integer("wv_dim", 50, "")
 
     # Model settings.
-    gflags.DEFINE_enum("model_type", "qrnn", ["cbow", "rnn", "rnn-gate", "qrnn"], "")
+    gflags.DEFINE_enum("model_type", "qrnn", ["cbow", "rnn", "rnn_pool", "qrnn"], "")
     gflags.DEFINE_integer("kernel_size", 3, "")
     gflags.DEFINE_integer("model_dim", 100, "")
     gflags.DEFINE_integer("mlp_dim", 256, "")

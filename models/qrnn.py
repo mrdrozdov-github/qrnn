@@ -12,18 +12,16 @@ from blocks import Linear, strnn
 import numpy as np
 
 
-class QRNNModel(nn.Module):
-    """docstring for QRNNModel"""
+class Model(nn.Module):
     def __init__(self, inp_dim=None, model_dim=None, mlp_dim=None, num_classes=None, dropout_rate=0.5,
                  kernel_size=None,
                  **kwargs):
-        super(QRNNModel, self).__init__()
+        super(Model, self).__init__()
         self.qrnn = QRNNLayer(
-            in_size=model_dim,
+            in_size=inp_dim,
             out_size=model_dim,
             kernel_size=kernel_size,
             )
-        self.projection = Linear(inp_dim, model_dim)
         self.l0 = nn.Linear(model_dim, mlp_dim)
         self.l1 = nn.Linear(mlp_dim, mlp_dim)
         self.l2 = nn.Linear(mlp_dim, num_classes)
