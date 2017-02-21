@@ -101,6 +101,7 @@ def run():
     model = model_cls(
         inp_dim=FLAGS.wv_dim,
         model_dim=FLAGS.model_dim,
+        num_layers=FLAGS.num_layers,
         mlp_dim=FLAGS.mlp_dim,
         num_classes=FLAGS.num_classes,
         kernel_size=FLAGS.kernel_size,
@@ -197,6 +198,7 @@ if __name__ == '__main__':
     gflags.DEFINE_enum("model_type", "qrnn", ["cbow", "rnn", "rnn_pool", "qrnn"], "")
     gflags.DEFINE_integer("kernel_size", 3, "")
     gflags.DEFINE_integer("model_dim", 100, "")
+    gflags.DEFINE_integer("num_layers", 2, "")
     gflags.DEFINE_integer("mlp_dim", 256, "")
     gflags.DEFINE_integer("num_classes", 3, "")
 

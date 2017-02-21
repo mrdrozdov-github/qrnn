@@ -13,13 +13,15 @@ import numpy as np
 
 
 class Model(nn.Module):
-    def __init__(self, inp_dim=None, model_dim=None, mlp_dim=None, num_classes=None, dropout_rate=0.5,
-                 kernel_size=None,
+    def __init__(self, inp_dim=None, model_dim=None, num_layers=None, mlp_dim=None, num_classes=None,
+                 dropout_rate=0.5, kernel_size=None,
                  **kwargs):
         super(Model, self).__init__()
-        self.qrnn = QRNNLayer(
-            in_size=inp_dim,
-            out_size=model_dim,
+
+        self.init_qrnn(
+            inp_dim=inp_dim,
+            model_dim=model_dim,
+            num_layers=num_layers,
             kernel_size=kernel_size,
             )
         self.l0 = nn.Linear(model_dim, mlp_dim)
@@ -27,8 +29,25 @@ class Model(nn.Module):
         self.l2 = nn.Linear(mlp_dim, num_classes)
         self.dropout_rate = dropout_rate
 
+    def init_qrnn(self, inp_dim, model_dim, num_layers, kernel_size):
+        self.num_layers = num_layers
+        x_dim = inp_dim
+
+        for i in range(num_layers):
+            setattr(self, "qrnn_{}".format(i), QRNNLayer(
+                in_size=x_dim,
+                out_size=model_dim,
+                kernel_size=kernel_size,
+                ))
+            x_dim = model_dim
+
+    def run_qrnn(self, x):
+        for i in range(self.num_layers):
+            x = getattr(self, "qrnn_{}".format(i))(x)
+        return x
+
     def forward(self, x):
-        qs = self.qrnn(x)
+        qs = self.run_qrnn(x)
         q = qs[:, -1, :]
         q = F.relu(F.dropout(self.l0(q), self.dropout_rate, self.training))
         q = F.relu(F.dropout(self.l1(q), self.dropout_rate, self.training))
